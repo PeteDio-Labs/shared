@@ -19,7 +19,6 @@
     "registry": "https://registry.toastedbytes.com/repository/npm-private/"
   },
   "devDependencies": {
-    "@types/bun": "latest",
     "typescript": "^5"
   },
   "peerDependencies": {
