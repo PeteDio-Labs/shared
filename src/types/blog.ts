@@ -23,6 +23,7 @@ export interface BlogPostResponse {
   content: string;
   excerpt: string;
   status: string;
+  coverImageUrl?: string | null;
   tags: BlogPostTag[];
   createdAt: string;
   updatedAt: string;
