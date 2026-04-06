@@ -33,9 +33,5 @@ jobs:
         run: |
           printf 'registry=https://registry.toastedbytes.com/repository/npm-hosted/\n' > .npmrc
           printf '//registry.toastedbytes.com/repository/npm-hosted/:_auth=%s\n' "${NEXUS_NPM_TOKEN}" >> .npmrc
-          echo "--- .npmrc contents ---"
-          cat .npmrc
-          echo "--- npm whoami ---"
-          npm whoami --userconfig .npmrc || true
           npm publish --userconfig .npmrc
           rm .npmrc
