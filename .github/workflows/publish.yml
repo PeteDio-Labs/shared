@@ -20,6 +20,9 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+        env:
+          # Use public npm registry for CI — Nexus is LAN-only
+          BUN_CONFIG_REGISTRY: https://registry.npmjs.org/
 
       - name: Type check
         run: bun run typecheck
