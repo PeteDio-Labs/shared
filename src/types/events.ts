@@ -27,7 +27,7 @@ export interface InfraEventInput {
 }
 
 export interface InfraEvent extends InfraEventInput {
-  id: string;
-  timestamp: string;
-  processed: boolean;
+  id?: string;
+  timestamp?: string;
+  processed?: boolean;
 }
