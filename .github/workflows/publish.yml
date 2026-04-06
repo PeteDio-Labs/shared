@@ -31,6 +31,7 @@ jobs:
         env:
           NEXUS_NPM_TOKEN: ${{ secrets.NEXUS_NPM_TOKEN }}
         run: |
-          npm config set registry https://registry.toastedbytes.com/repository/npm-hosted/
-          npm config set "//registry.toastedbytes.com/repository/npm-hosted/:_auth" "${NEXUS_NPM_TOKEN}"
-          npm publish
+          echo "registry=https://registry.toastedbytes.com/repository/npm-hosted/" > .npmrc
+          echo "//registry.toastedbytes.com/repository/npm-hosted/:_auth=${NEXUS_NPM_TOKEN}" >> .npmrc
+          npm publish --userconfig .npmrc
+          rm .npmrc
