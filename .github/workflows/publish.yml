@@ -19,9 +19,9 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
+        # Use public npm — Nexus is LAN-only and unreachable from GitHub runners
         run: bun install --frozen-lockfile
         env:
-          # Use public npm registry for CI — Nexus is LAN-only
           BUN_CONFIG_REGISTRY: https://registry.npmjs.org/
 
       - name: Type check
@@ -31,9 +31,6 @@ jobs:
         env:
           NEXUS_NPM_TOKEN: ${{ secrets.NEXUS_NPM_TOKEN }}
         run: |
-          cat > .npmrc.publish << EOF
-          registry=https://registry.toastedbytes.com/repository/npm-private/
-          //registry.toastedbytes.com/repository/npm-private/:_auth=${NEXUS_NPM_TOKEN}
-          EOF
-          npm publish --userconfig .npmrc.publish
-          rm .npmrc.publish
+          npm config set registry https://registry.toastedbytes.com/repository/npm-hosted/
+          npm config set "//registry.toastedbytes.com/repository/npm-hosted/:_auth" "${NEXUS_NPM_TOKEN}"
+          npm publish
