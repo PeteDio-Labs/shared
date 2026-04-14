@@ -3,7 +3,7 @@
  * Mirrors notification-service/src/types.ts (the authoritative schema).
  */
 
-export type EventSource = 'kubernetes' | 'proxmox' | 'argocd';
+export type EventSource = 'kubernetes' | 'proxmox' | 'argocd' | 'prometheus' | 'mission-control' | 'agent';
 
 export type EventType =
   | 'deployment'
@@ -12,7 +12,12 @@ export type EventType =
   | 'lxc-status'
   | 'sync-drift'
   | 'node-status'
-  | 'rollout';
+  | 'rollout'
+  | 'alert'
+  | 'agent-down'
+  | 'agent-recovered'
+  | 'agent-complete'
+  | 'remediation';
 
 export type Severity = 'info' | 'warning' | 'critical';
 
