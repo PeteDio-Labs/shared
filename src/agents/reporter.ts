@@ -96,12 +96,16 @@ export class AgentReporter {
 
   private async post(path: string, body: unknown): Promise<void> {
     try {
-      await fetch(`${this.mcUrl}${path}`, {
+      const res = await fetch(`${this.mcUrl}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(5_000),
+        signal: AbortSignal.timeout(10_000),
       });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        console.warn(`[reporter] MC rejected POST ${path} — ${res.status}: ${text.slice(0, 200)}`);
+      }
     } catch {
       // MC unreachable — agent continues regardless, results may be lost
       console.warn(`[reporter] MC unreachable — could not POST ${path}`);
