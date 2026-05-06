@@ -15,12 +15,63 @@ export const TaskPayloadSchema = z.object({
 });
 export type TaskPayload = z.infer<typeof TaskPayloadSchema>;
 
+// ─── Approval Preview ────────────────────────────────────────────
+//
+// Discriminated union shared with MC frontend (Phase 2.4 contract,
+// `planning/MISSION-CONTROL-HOMELAB-UPGRADE.md` lines 192-195). Source
+// of truth lived in `agents/infra-agent/src/runbooks/types.ts`; lifted
+// here in 1.4.0 so MC backend, agents, and the web UI all import from
+// one place.
+//
+// The MC frontend reads `pending_approval.preview` directly, so the
+// shape (key names, case) MUST match what MC renders.
+
+export const TextPreviewSchema = z.object({
+  type: z.literal('text'),
+  content: z.string(),
+});
+export type TextPreview = z.infer<typeof TextPreviewSchema>;
+
+export const TfPlanPreviewSchema = z.object({
+  type: z.literal('tf-plan'),
+  planText: z.string(),
+  summary: z.object({
+    add: z.number(),
+    change: z.number(),
+    destroy: z.number(),
+  }),
+});
+export type TfPlanPreview = z.infer<typeof TfPlanPreviewSchema>;
+
+export const AnsibleCheckTaskSchema = z.object({
+  name: z.string(),
+  host: z.string(),
+  changed: z.boolean(),
+  diff: z.string().optional(),
+});
+export type AnsibleCheckTask = z.infer<typeof AnsibleCheckTaskSchema>;
+
+export const AnsibleCheckPreviewSchema = z.object({
+  type: z.literal('ansible-check'),
+  tasks: z.array(AnsibleCheckTaskSchema),
+});
+export type AnsibleCheckPreview = z.infer<typeof AnsibleCheckPreviewSchema>;
+
+export const ApprovalPreviewSchema = z.discriminatedUnion('type', [
+  TextPreviewSchema,
+  TfPlanPreviewSchema,
+  AnsibleCheckPreviewSchema,
+]);
+export type ApprovalPreview = z.infer<typeof ApprovalPreviewSchema>;
+
 // ─── Status Updates ──────────────────────────────────────────────
 
 export const GatedActionSchema = z.object({
   actionType: z.enum(['write-file', 'git-commit', 'git-push', 'publish', 'deploy', 'remediate', 'create-tasks']),
   description: z.string(),
-  preview: z.string().optional(), // diff, task list, blog post, etc.
+  // Either a free-form string (legacy diff/task-list rendering) or a
+  // structured ApprovalPreview that MC can render with a typed widget.
+  preview: z.union([z.string(), ApprovalPreviewSchema]).optional(),
 });
 export type GatedAction = z.infer<typeof GatedActionSchema>;
 
