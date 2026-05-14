@@ -159,7 +159,7 @@ export function markAgentDown(): void {
  *
  * @example
  *   import { initAgentMetrics, renderMetrics } from '@petedio/shared/agents';
- *   initAgentMetrics({ agentName: 'pm-agent' });
+ *   initAgentMetrics({ agentName: 'ops-investigator' });
  *   app.get('/metrics', async (_req, res) => {
  *     res.setHeader('Content-Type', 'text/plain; version=0.0.4');
  *     res.send(await renderMetrics());
