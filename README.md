@@ -27,7 +27,7 @@ Shared types and utilities for PeteDio Labs services and agents.
 ```ts
 import { initAgentMetrics, renderMetrics, AgentReporter } from '@petedio/shared/agents';
 
-initAgentMetrics({ agentName: 'pm-agent' });
+initAgentMetrics({ agentName: 'ops-investigator' });
 // AgentReporter constructor calls this automatically — only call it
 // directly if your agent owns metrics lifecycle separately.
 
