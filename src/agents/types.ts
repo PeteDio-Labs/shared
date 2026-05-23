@@ -124,3 +124,59 @@ export interface ApprovalResult {
   token?: string;
   reason?: string;
 }
+
+// ─── Plan service (PB.9) ─────────────────────────────────────────
+//
+// Mirrors the canonical types in
+// `apps/mission-control/mission-control-backend/src/services/plans/types.ts`.
+// Agents call `reporter.proposeAction()` / `reporter.updatePlan()`; those
+// wrap MC's POST /api/v1/plans + PATCH /api/v1/plans/:id/status. Keep in
+// sync with CreatePlanBodySchema + TransitionStatusBodySchema in
+// `apps/mission-control/mission-control-backend/src/api/routes/plans.ts`.
+
+export type PlanKind =
+  | 'proposed_fix'
+  | 'alert'
+  | 'gated_action'
+  | 'eval_regression'
+  | 'capacity_warning';
+
+export type PlanSeverity = 'info' | 'warn' | 'error' | 'critical';
+
+export type ButtonStyle = 'primary' | 'secondary' | 'danger' | 'link';
+
+export interface SuggestedAction {
+  actionId: string;
+  label: string;
+  style?: ButtonStyle;
+  clickPayload?: Record<string, unknown>;
+}
+
+export interface ProposedFix {
+  agent: string;
+  task: string;
+  input?: Record<string, unknown>;
+}
+
+export interface ProposeActionInput {
+  kind: PlanKind;
+  severity?: PlanSeverity;
+  target?: string;
+  summary: string;
+  proposedFix?: ProposedFix;
+  actions: SuggestedAction[];
+  sourceMetadata?: Record<string, unknown>;
+  expiresInSeconds?: number;
+}
+
+export interface UpdatePlanInput {
+  toStatus: 'in_progress' | 'succeeded' | 'failed' | 'stuck' | 'resolved';
+  result?: Record<string, unknown>;
+  errorSummary?: string;
+  proposals?: Array<{ label: string; task?: string; mcUrl?: string }>;
+  triggeredAgentRunId?: string;
+}
+
+export interface ProposeActionResult {
+  planId: string;
+}

@@ -3,7 +3,16 @@
  * to Mission Control Backend. Gracefully degrades if MC is unreachable.
  */
 
-import type { AgentStatusUpdate, AgentResult, ApprovalRequest, ApprovalResult, GatedAction } from './types.js';
+import type {
+  AgentStatusUpdate,
+  AgentResult,
+  ApprovalRequest,
+  ApprovalResult,
+  GatedAction,
+  ProposeActionInput,
+  ProposeActionResult,
+  UpdatePlanInput,
+} from './types.js';
 import {
   initAgentMetrics,
   recordAgentApprovalRequest,
@@ -136,6 +145,106 @@ export class AgentReporter {
 
     recordAgentApprovalRequest('timeout');
     return { outcome: 'rejected', reason: 'Approval timeout (10 min)' };
+  }
+
+  /**
+   * Propose a fix-action plan to Mission Control (PB.9).
+   *
+   * Wraps `POST /api/v1/plans`. The plan surfaces in MC Web + Discord as
+   * an approval card the user can click to dispatch `proposedFix.agent`
+   * with `proposedFix.input`. Unlike status/result/log calls, this method
+   * is LOUD — non-2xx responses and missing MC URL throw, because a
+   * dropped proposal means no one ever sees the suggested fix.
+   *
+   * `source: 'agent'` is hard-coded. `sourceMetadata` is auto-merged with
+   * `{ taskId, agentName }` from the reporter's construction context.
+   */
+  async proposeAction(input: ProposeActionInput): Promise<ProposeActionResult> {
+    if (!this.mcUrl) {
+      throw new Error('[reporter] proposeAction: MC URL is not configured');
+    }
+
+    const body = {
+      kind: input.kind,
+      severity: input.severity,
+      source: 'agent' as const,
+      sourceMetadata: {
+        taskId: this.taskId,
+        agentName: this.agentName,
+        ...(input.sourceMetadata ?? {}),
+      },
+      target: input.target,
+      summary: input.summary,
+      proposedFix: input.proposedFix,
+      actions: input.actions,
+      expiresInSeconds: input.expiresInSeconds,
+    };
+
+    const url = `${this.mcUrl}/api/v1/plans`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(
+        `[reporter] proposeAction failed: POST ${url} → ${res.status} ${text.slice(0, 200)}`,
+      );
+    }
+
+    const data = (await res.json()) as { planId?: string; plan?: { id?: string } };
+    const planId = data.planId ?? data.plan?.id;
+    if (!planId) {
+      throw new Error(
+        `[reporter] proposeAction: MC returned ${res.status} but no planId in body`,
+      );
+    }
+    return { planId };
+  }
+
+  /**
+   * Update a plan's status (PB.9).
+   *
+   * Wraps `PATCH /api/v1/plans/:id/status` with `actorSource: 'agent'`
+   * hard-coded. Used by agents that own a plan's execution lifecycle —
+   * e.g. an agent dispatched by a proposed_fix plan marks the plan
+   * succeeded/failed/stuck once its work is done.
+   *
+   * Loud about misconfiguration / non-2xx responses, same rationale as
+   * proposeAction (silent failure here means a plan stuck "in_progress"
+   * forever in MC's UI).
+   */
+  async updatePlan(planId: string, input: UpdatePlanInput): Promise<void> {
+    if (!this.mcUrl) {
+      throw new Error('[reporter] updatePlan: MC URL is not configured');
+    }
+
+    const body = {
+      toStatus: input.toStatus,
+      actorSource: 'agent' as const,
+      result: input.result,
+      errorSummary: input.errorSummary,
+      proposals: input.proposals,
+      triggeredAgentRunId: input.triggeredAgentRunId,
+    };
+
+    const url = `${this.mcUrl}/api/v1/plans/${planId}/status`;
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(
+        `[reporter] updatePlan failed: PATCH ${url} → ${res.status} ${text.slice(0, 200)}`,
+      );
+    }
   }
 
   private async postStatus(update: Omit<AgentStatusUpdate, 'taskId' | 'agentName' | 'updatedAt'>): Promise<void> {

@@ -408,3 +408,269 @@ describe('Extended agent_* metrics (kanban 2.9)', () => {
     expect(text).toContain('agent_approval_requests_total{agent="metrics-agent",outcome="approved"} 1');
   }, 10_000);
 });
+
+// ─── Plan service: proposeAction + updatePlan (PB.9) ───────────────
+
+describe('AgentReporter — proposeAction()', () => {
+  it('POSTs to /api/v1/plans and returns planId', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      ({
+        ok: true,
+        status: 201,
+        json: async () => ({ planId: 'pl_abc123', plan: { id: 'pl_abc123' } }),
+        text: async () => '',
+      }) as unknown as Response,
+    ) as unknown as typeof fetch;
+
+    const reporter = new AgentReporter({
+      mcUrl: 'http://mc.example',
+      taskId: 'task-1',
+      agentName: 'test-agent',
+    });
+
+    const result = await reporter.proposeAction({
+      kind: 'proposed_fix',
+      severity: 'warn',
+      target: 'qbittorrent-vpn',
+      summary: 'VPN stuck — bounce the stack?',
+      proposedFix: {
+        agent: 'infra-agent',
+        task: 'restart qbittorrent-vpn',
+        input: { lxcId: 110 },
+      },
+      actions: [
+        { actionId: 'yes', label: 'Fix it', style: 'primary' },
+        { actionId: 'dismiss', label: 'Dismiss' },
+      ],
+      sourceMetadata: { extra: 'context' },
+      expiresInSeconds: 3600,
+    });
+
+    expect(result).toEqual({ planId: 'pl_abc123' });
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('http://mc.example/api/v1/plans');
+    expect(init.method).toBe('POST');
+    expect(init.headers).toMatchObject({ 'Content-Type': 'application/json' });
+
+    const body = JSON.parse(init.body as string);
+    expect(body.kind).toBe('proposed_fix');
+    expect(body.severity).toBe('warn');
+    expect(body.source).toBe('agent');
+    expect(body.target).toBe('qbittorrent-vpn');
+    expect(body.summary).toBe('VPN stuck — bounce the stack?');
+    expect(body.proposedFix).toEqual({
+      agent: 'infra-agent',
+      task: 'restart qbittorrent-vpn',
+      input: { lxcId: 110 },
+    });
+    expect(body.actions).toHaveLength(2);
+    expect(body.actions[0]).toEqual({ actionId: 'yes', label: 'Fix it', style: 'primary' });
+    expect(body.sourceMetadata).toEqual({
+      taskId: 'task-1',
+      agentName: 'test-agent',
+      extra: 'context',
+    });
+    expect(body.expiresInSeconds).toBe(3600);
+  });
+
+  it('falls back to plan.id when top-level planId is missing', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      ({
+        ok: true,
+        status: 201,
+        json: async () => ({ plan: { id: 'pl_nested' } }),
+        text: async () => '',
+      }) as unknown as Response,
+    ) as unknown as typeof fetch;
+
+    const reporter = new AgentReporter({
+      mcUrl: 'http://mc.example',
+      taskId: 'task-1',
+      agentName: 'test-agent',
+    });
+
+    const result = await reporter.proposeAction({
+      kind: 'alert',
+      summary: 'fyi',
+      actions: [{ actionId: 'ack', label: 'Ack' }],
+    });
+
+    expect(result.planId).toBe('pl_nested');
+  });
+
+  it('throws if MC returns 500 (with status code in error message)', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      ({
+        ok: false,
+        status: 500,
+        json: async () => ({}),
+        text: async () => 'internal server error',
+      }) as unknown as Response,
+    ) as unknown as typeof fetch;
+
+    const reporter = new AgentReporter({
+      mcUrl: 'http://mc.example',
+      taskId: 'task-1',
+      agentName: 'test-agent',
+    });
+
+    await expect(
+      reporter.proposeAction({
+        kind: 'alert',
+        summary: 'will fail',
+        actions: [{ actionId: 'ack', label: 'Ack' }],
+      }),
+    ).rejects.toThrow(/500/);
+  });
+
+  it('throws when mcUrl is empty (unset env var)', async () => {
+    const reporter = new AgentReporter({
+      mcUrl: '',
+      taskId: 'task-1',
+      agentName: 'test-agent',
+    });
+
+    await expect(
+      reporter.proposeAction({
+        kind: 'alert',
+        summary: 'will fail',
+        actions: [{ actionId: 'ack', label: 'Ack' }],
+      }),
+    ).rejects.toThrow(/MC URL is not configured/);
+  });
+
+  it('throws if MC returns 2xx but no planId in body', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      ({
+        ok: true,
+        status: 201,
+        json: async () => ({}),
+        text: async () => '',
+      }) as unknown as Response,
+    ) as unknown as typeof fetch;
+
+    const reporter = new AgentReporter({
+      mcUrl: 'http://mc.example',
+      taskId: 'task-1',
+      agentName: 'test-agent',
+    });
+
+    await expect(
+      reporter.proposeAction({
+        kind: 'alert',
+        summary: 'no plan id back',
+        actions: [{ actionId: 'ack', label: 'Ack' }],
+      }),
+    ).rejects.toThrow(/no planId/);
+  });
+});
+
+describe('AgentReporter — updatePlan()', () => {
+  it('PATCHes /api/v1/plans/:id/status with actorSource=agent', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => ({ plan: {} }),
+        text: async () => '',
+      }) as unknown as Response,
+    ) as unknown as typeof fetch;
+
+    const reporter = new AgentReporter({
+      mcUrl: 'http://mc.example',
+      taskId: 'task-1',
+      agentName: 'test-agent',
+    });
+
+    await reporter.updatePlan('pl_abc123', {
+      toStatus: 'succeeded',
+      result: { restartedAt: '2026-05-23T12:00:00Z' },
+      triggeredAgentRunId: '00000000-0000-0000-0000-000000000001',
+    });
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('http://mc.example/api/v1/plans/pl_abc123/status');
+    expect(init.method).toBe('PATCH');
+    expect(init.headers).toMatchObject({ 'Content-Type': 'application/json' });
+
+    const body = JSON.parse(init.body as string);
+    expect(body.toStatus).toBe('succeeded');
+    expect(body.actorSource).toBe('agent');
+    expect(body.result).toEqual({ restartedAt: '2026-05-23T12:00:00Z' });
+    expect(body.triggeredAgentRunId).toBe('00000000-0000-0000-0000-000000000001');
+  });
+
+  it('passes through errorSummary + proposals for stuck transitions', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => ({ plan: {} }),
+        text: async () => '',
+      }) as unknown as Response,
+    ) as unknown as typeof fetch;
+
+    const reporter = new AgentReporter({
+      mcUrl: 'http://mc.example',
+      taskId: 'task-1',
+      agentName: 'test-agent',
+    });
+
+    await reporter.updatePlan('pl_stuck', {
+      toStatus: 'stuck',
+      errorSummary: 'NAT-PMP still empty after restart',
+      proposals: [
+        { label: 'Try a different exit', task: 'switch-proton-country' },
+        { label: 'Investigate manually', mcUrl: 'https://mc.pdlab.dev/plans/pl_stuck' },
+      ],
+    });
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(init.body as string);
+    expect(body.errorSummary).toBe('NAT-PMP still empty after restart');
+    expect(body.proposals).toHaveLength(2);
+    expect(body.proposals[1]).toEqual({
+      label: 'Investigate manually',
+      mcUrl: 'https://mc.pdlab.dev/plans/pl_stuck',
+    });
+  });
+
+  it('throws on non-2xx', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      ({
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+        text: async () => 'plan not found',
+      }) as unknown as Response,
+    ) as unknown as typeof fetch;
+
+    const reporter = new AgentReporter({
+      mcUrl: 'http://mc.example',
+      taskId: 'task-1',
+      agentName: 'test-agent',
+    });
+
+    await expect(
+      reporter.updatePlan('pl_missing', { toStatus: 'succeeded' }),
+    ).rejects.toThrow(/404/);
+  });
+
+  it('throws when mcUrl is empty', async () => {
+    const reporter = new AgentReporter({
+      mcUrl: '',
+      taskId: 'task-1',
+      agentName: 'test-agent',
+    });
+
+    await expect(
+      reporter.updatePlan('pl_abc', { toStatus: 'succeeded' }),
+    ).rejects.toThrow(/MC URL is not configured/);
+  });
+});
