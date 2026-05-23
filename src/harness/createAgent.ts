@@ -14,12 +14,17 @@ import type { z } from 'zod';
 import { AgentReporter } from '../agents/reporter.js';
 import { runDeterministicPlan } from '../agents/deterministic.js';
 import { runToolLoop } from '../agents/loop.js';
-import { initAgentMetrics } from '../agents/metrics.js';
+import {
+  initAgentMetrics,
+  recordAgentRunDuration,
+  type AgentRunStatus,
+} from '../agents/metrics.js';
 import type { AgentResult, TaskPayload } from '../agents/types.js';
 
 import { LlmClient } from './llmClient.js';
 import { noopMemory, type Memory } from './memory.js';
-import type { Tool } from './tool.js';
+import { runPlanExecute } from './planExecute.js';
+import { wrapToolExecution, type Tool } from './tool.js';
 import { startStandaloneAgentServer, type ServerHandle } from './server.js';
 
 export type AgentMode = 'deterministic' | 'tool-loop' | 'plan-execute';
@@ -34,6 +39,7 @@ export interface AgentRunContext<TInput> {
   log: Logger;
   runDeterministic: typeof runDeterministicPlan;
   runToolLoop: typeof runToolLoop;
+  runPlanExecute: typeof runPlanExecute;
 }
 
 export interface CreateAgentOptions<TInput> {
@@ -59,7 +65,11 @@ export function createAgent<TInput>(opts: CreateAgentOptions<TInput>): AgentHand
   const log = pino({ level: process.env.LOG_LEVEL ?? 'info', name: opts.name });
   const memory = opts.memory ?? noopMemory();
   const llm = new LlmClient({ defaultModel: opts.model, ...(opts.llm ?? {}) });
-  const tools = new Map<string, Tool>((opts.tools ?? []).map(t => [t.name, t]));
+  // Wrap each tool so invocations auto-record agent_tool_calls_total +
+  // agent_tool_duration_seconds. The wrapper preserves name/description/
+  // parameters/gate/dryRun and is transparent to consumers.
+  const wrappedTools = (opts.tools ?? []).map(t => wrapToolExecution(t));
+  const tools = new Map<string, Tool>(wrappedTools.map(t => [t.name, t]));
   const mcUrl = opts.mcUrl ?? process.env.MC_BACKEND_URL ?? 'http://localhost:3000';
 
   // Initialise metrics eagerly so /metrics scrapes BEFORE the first /run
@@ -87,6 +97,8 @@ export function createAgent<TInput>(opts: CreateAgentOptions<TInput>): AgentHand
 
     // Ack immediately so MC doesn't think the request hung; run in background.
     void (async () => {
+      const start = performance.now();
+      let runStatus: AgentRunStatus = 'complete';
       try {
         await reporter.running(`starting ${opts.name}`);
         const result = await opts.run({
@@ -99,12 +111,18 @@ export function createAgent<TInput>(opts: CreateAgentOptions<TInput>): AgentHand
           log,
           runDeterministic: runDeterministicPlan,
           runToolLoop,
+          runPlanExecute,
         });
+        runStatus = result.status;
         await reporter.complete(result);
       } catch (err) {
+        runStatus = 'failed';
         const msg = err instanceof Error ? err.message : String(err);
         log.error({ taskId: payload.taskId, err: msg }, 'agent run failed');
         await reporter.fail(msg);
+      } finally {
+        const seconds = (performance.now() - start) / 1000;
+        recordAgentRunDuration(seconds, runStatus);
       }
     })();
 

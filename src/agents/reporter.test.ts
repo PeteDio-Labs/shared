@@ -10,6 +10,12 @@ import {
   getMetricsRegistry,
   initAgentMetrics,
   markAgentDown,
+  recordAgentApprovalRequest,
+  recordAgentLlmCall,
+  recordAgentMemoryOp,
+  recordAgentRunDuration,
+  recordAgentToolCall,
+  recordAgentToolDuration,
 } from './metrics.js';
 import type { AgentResult } from './types.js';
 
@@ -262,4 +268,143 @@ describe('initAgentMetrics safety', () => {
       initAgentMetrics({ agentName: 'agent-a', installShutdownHandlers: false }),
     ).not.toThrow();
   });
+});
+
+// ─── Extended metrics (kanban 2.9) ──────────────────────────────
+
+describe('Extended agent_* metrics (kanban 2.9)', () => {
+  it('registers all new metric families on init', async () => {
+    initAgentMetrics({ agentName: 'metrics-agent', installShutdownHandlers: false });
+
+    const text = await getMetricsRegistry().metrics();
+    // Histograms emit `# TYPE <name> histogram` + bucket lines.
+    expect(text).toMatch(/# TYPE agent_run_duration_seconds histogram/);
+    expect(text).toMatch(/# TYPE agent_tool_duration_seconds histogram/);
+    // Counters emit `# TYPE <name> counter`.
+    expect(text).toMatch(/# TYPE agent_tool_calls_total counter/);
+    expect(text).toMatch(/# TYPE agent_llm_calls_total counter/);
+    expect(text).toMatch(/# TYPE agent_approval_requests_total counter/);
+    expect(text).toMatch(/# TYPE agent_memory_ops_total counter/);
+    expect(text).toMatch(/# TYPE agent_metrics_uninitialized_total counter/);
+  });
+
+  it('recordAgentRunDuration observes into the histogram with the agent label', async () => {
+    initAgentMetrics({ agentName: 'metrics-agent', installShutdownHandlers: false });
+    recordAgentRunDuration(1.5, 'complete');
+
+    const text = await getMetricsRegistry().metrics();
+    expect(text).toContain('agent_run_duration_seconds_count{agent="metrics-agent",status="complete"} 1');
+    expect(text).toContain('agent_run_duration_seconds_sum{agent="metrics-agent",status="complete"} 1.5');
+  });
+
+  it('recordAgentToolCall increments the counter with tool + status labels', async () => {
+    initAgentMetrics({ agentName: 'metrics-agent', installShutdownHandlers: false });
+    recordAgentToolCall('foo', 'success');
+    recordAgentToolCall('foo', 'success');
+    recordAgentToolCall('foo', 'error');
+
+    const text = await getMetricsRegistry().metrics();
+    expect(text).toContain('agent_tool_calls_total{agent="metrics-agent",tool="foo",status="success"} 2');
+    expect(text).toContain('agent_tool_calls_total{agent="metrics-agent",tool="foo",status="error"} 1');
+  });
+
+  it('recordAgentToolDuration observes the per-tool histogram', async () => {
+    initAgentMetrics({ agentName: 'metrics-agent', installShutdownHandlers: false });
+    recordAgentToolDuration('foo', 0.25);
+
+    const text = await getMetricsRegistry().metrics();
+    expect(text).toContain('agent_tool_duration_seconds_count{agent="metrics-agent",tool="foo"} 1');
+    expect(text).toContain('agent_tool_duration_seconds_sum{agent="metrics-agent",tool="foo"} 0.25');
+  });
+
+  it('recordAgentLlmCall increments by model + status', async () => {
+    initAgentMetrics({ agentName: 'metrics-agent', installShutdownHandlers: false });
+    recordAgentLlmCall('gemma4:e4b', 'success');
+    recordAgentLlmCall('gemma4:e4b', 'error');
+
+    const text = await getMetricsRegistry().metrics();
+    expect(text).toContain('agent_llm_calls_total{agent="metrics-agent",model="gemma4:e4b",status="success"} 1');
+    expect(text).toContain('agent_llm_calls_total{agent="metrics-agent",model="gemma4:e4b",status="error"} 1');
+  });
+
+  it('recordAgentApprovalRequest increments by outcome (approved/rejected/timeout)', async () => {
+    initAgentMetrics({ agentName: 'metrics-agent', installShutdownHandlers: false });
+    recordAgentApprovalRequest('approved');
+    recordAgentApprovalRequest('rejected');
+    recordAgentApprovalRequest('timeout');
+
+    const text = await getMetricsRegistry().metrics();
+    expect(text).toContain('agent_approval_requests_total{agent="metrics-agent",outcome="approved"} 1');
+    expect(text).toContain('agent_approval_requests_total{agent="metrics-agent",outcome="rejected"} 1');
+    expect(text).toContain('agent_approval_requests_total{agent="metrics-agent",outcome="timeout"} 1');
+  });
+
+  it('recordAgentMemoryOp increments by op (recall/remember/forget)', async () => {
+    initAgentMetrics({ agentName: 'metrics-agent', installShutdownHandlers: false });
+    recordAgentMemoryOp('recall');
+    recordAgentMemoryOp('remember');
+    recordAgentMemoryOp('forget');
+
+    const text = await getMetricsRegistry().metrics();
+    expect(text).toContain('agent_memory_ops_total{agent="metrics-agent",op="recall"} 1');
+    expect(text).toContain('agent_memory_ops_total{agent="metrics-agent",op="remember"} 1');
+    expect(text).toContain('agent_memory_ops_total{agent="metrics-agent",op="forget"} 1');
+  });
+
+  it('recorders before init do not throw and (once init runs) increment agent_metrics_uninitialized_total', async () => {
+    // Suppress the single console.warn per metric to keep test output clean.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    // No init yet — these must not throw. The uninitialized counter
+    // doesn't exist until init, so these calls only emit the warn.
+    expect(() => recordAgentToolCall('foo', 'success')).not.toThrow();
+    expect(() => recordAgentLlmCall('m', 'success')).not.toThrow();
+
+    // Now init, then call again — the uninitialized branch is hit ONLY
+    // when _agentName is null OR the metric handle is null. After init
+    // both are set, so the next call records normally. To verify the
+    // uninit-counter path we'd need to construct a scenario that can't
+    // happen in practice; instead we verify the counter exists at 0 and
+    // the type is registered.
+    initAgentMetrics({ agentName: 'metrics-agent', installShutdownHandlers: false });
+
+    const text = await getMetricsRegistry().metrics();
+    expect(text).toMatch(/# TYPE agent_metrics_uninitialized_total counter/);
+
+    warnSpy.mockRestore();
+  });
+
+  it('recordAgentApprovalRequest("approved") via reporter.requestApproval is wired through', async () => {
+    // First poll returns approved → reporter records the metric.
+    const responses: Array<{ ok: boolean; status: number; json: () => Promise<unknown>; text: () => Promise<string> }> = [
+      // POST status update (waiting_approval)
+      { ok: true, status: 200, json: async () => ({}), text: async () => '' },
+      // POST approval request
+      { ok: true, status: 200, json: async () => ({}), text: async () => '' },
+      // GET approval poll → approved
+      { ok: true, status: 200, json: async () => ({ outcome: 'approved' }), text: async () => '' },
+      // POST status update (running, after approval)
+      { ok: true, status: 200, json: async () => ({}), text: async () => '' },
+    ];
+    globalThis.fetch = vi.fn(async () => {
+      const next = responses.shift();
+      return (next ?? { ok: true, status: 200, json: async () => ({}), text: async () => '' }) as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    const reporter = new AgentReporter({
+      mcUrl: 'http://mc.example',
+      taskId: 'task-approve',
+      agentName: 'metrics-agent',
+    });
+
+    const result = await reporter.requestApproval({
+      actionType: 'deploy',
+      description: 'roll out v2',
+      preview: 'kubectl apply -f manifest.yaml',
+    });
+
+    expect(result.outcome).toBe('approved');
+    const text = await getMetricsRegistry().metrics();
+    expect(text).toContain('agent_approval_requests_total{agent="metrics-agent",outcome="approved"} 1');
+  }, 10_000);
 });

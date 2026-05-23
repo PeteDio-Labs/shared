@@ -1,6 +1,6 @@
 {
   "name": "@petedio/shared",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "Unified shared types and utilities for PeteDio Labs",
   "type": "module",
   "exports": {

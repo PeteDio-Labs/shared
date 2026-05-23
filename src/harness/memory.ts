@@ -27,7 +27,23 @@ export interface Memory {
   forget?(id: string): Promise<void>;
 }
 
-/** Default adapter — used when no memory backend is configured. */
+/**
+ * Default adapter — used when no memory backend is configured.
+ *
+ * Intentionally does NOT call `recordAgentMemoryOp()` — no-op recalls
+ * shouldn't pollute the `agent_memory_ops_total` series. Real adapters
+ * (SurrealDB, future blog v2 RAG) are expected to import
+ * `recordAgentMemoryOp` from `@petedio/shared/agents` and call it inside
+ * each of their `recall`/`remember`/`forget` implementations:
+ *
+ * @example
+ *   import { recordAgentMemoryOp } from '@petedio/shared/agents';
+ *
+ *   async recall(query: string) {
+ *     recordAgentMemoryOp('recall');
+ *     return this.store.query(query);
+ *   }
+ */
 export function noopMemory(): Memory {
   return {
     async recall() {

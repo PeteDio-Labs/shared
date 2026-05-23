@@ -11,6 +11,10 @@
 import type { GatedAction } from '../agents/types.js';
 import type { AgentReporter } from '../agents/reporter.js';
 import type { ToolDef } from '../agents/loop.js';
+import {
+  recordAgentToolCall,
+  recordAgentToolDuration,
+} from '../agents/metrics.js';
 import type pino from 'pino';
 
 export interface ToolExecContext {
@@ -46,4 +50,40 @@ export interface Tool<TArgs = Record<string, unknown>> extends Omit<ToolDef<TArg
 
   /** Optional preview — same shape as execute but must not mutate state. */
   dryRun?(args: TArgs, ctx: ToolExecContext): Promise<string>;
+}
+
+/**
+ * Wrap a Tool so every invocation increments
+ * `agent_tool_calls_total{agent,tool,status}` and observes
+ * `agent_tool_duration_seconds{agent,tool}` on completion.
+ *
+ * `dryRun` is intentionally NOT wrapped — previews shouldn't pollute the
+ * production-traffic metrics. `gate` is a pure function and not wrapped.
+ *
+ * The agent label is auto-pulled from `getAgentName()` inside the metric
+ * recorders, so callers don't need to thread it through.
+ *
+ * @example
+ *   const wrappedTools = (opts.tools ?? []).map(wrapToolExecution);
+ *   const toolMap = new Map(wrappedTools.map(t => [t.name, t]));
+ */
+export function wrapToolExecution<TArgs>(tool: Tool<TArgs>): Tool<TArgs> {
+  return {
+    ...tool,
+    async execute(args: TArgs, ctx: ToolExecContext): Promise<string> {
+      const start = performance.now();
+      try {
+        const out = await tool.execute(args, ctx);
+        const seconds = (performance.now() - start) / 1000;
+        recordAgentToolCall(tool.name, 'success');
+        recordAgentToolDuration(tool.name, seconds);
+        return out;
+      } catch (err) {
+        const seconds = (performance.now() - start) / 1000;
+        recordAgentToolCall(tool.name, 'error');
+        recordAgentToolDuration(tool.name, seconds);
+        throw err;
+      }
+    },
+  };
 }

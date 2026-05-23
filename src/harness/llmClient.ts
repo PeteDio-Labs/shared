@@ -7,6 +7,7 @@
  */
 
 import { resolveOllamaUrl } from '../agents/ollamaRouter.js';
+import { recordAgentLlmCall } from '../agents/metrics.js';
 import type { ToolDef } from '../agents/loop.js';
 
 const DEFAULT_GATEWAY_URL = 'http://localhost:3006';
@@ -52,6 +53,17 @@ export class LlmClient {
     const model = req.model ?? this.defaultModel;
     if (!model) throw new Error('LlmClient.chat: model not provided and no default');
 
+    try {
+      const out = await this._chatInner(model, req);
+      recordAgentLlmCall(model, 'success');
+      return out;
+    } catch (err) {
+      recordAgentLlmCall(model, 'error');
+      throw err;
+    }
+  }
+
+  private async _chatInner(model: string, req: ChatRequest): Promise<ChatResponse> {
     const body = {
       model,
       messages: req.messages,

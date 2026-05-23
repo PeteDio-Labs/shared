@@ -23,6 +23,15 @@ export type {
 } from './llmClient.js';
 
 export type { Tool, ToolExecContext } from './tool.js';
+export { wrapToolExecution } from './tool.js';
+
+export { runPlanExecute, PlanSchema, parsePlanResponse } from './planExecute.js';
+export type {
+  PlanExecuteStep,
+  ExecutedStep,
+  PlanExecuteResult,
+  PlanExecuteOptions,
+} from './planExecute.js';
 export type { Memory, MemoryHit, Fact } from './memory.js';
 export { noopMemory } from './memory.js';
 
@@ -38,12 +47,21 @@ export type { ServerOptions, ServerHandle } from './server.js';
 export {
   initAgentMetrics,
   getMetricsRegistry,
+  getAgentName,
   markAgentDown,
   recordAgentRun,
+  recordAgentRunDuration,
+  recordAgentToolCall,
+  recordAgentToolDuration,
+  recordAgentLlmCall,
+  recordAgentApprovalRequest,
+  recordAgentMemoryOp,
   renderMetrics,
 } from '../agents/metrics.js';
 export type {
   AgentMetricsHandles,
   AgentRunStatus,
+  AgentApprovalOutcome,
+  AgentMemoryOp,
   InitAgentMetricsOptions,
 } from '../agents/metrics.js';

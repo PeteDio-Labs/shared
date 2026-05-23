@@ -4,7 +4,12 @@
  */
 
 import type { AgentStatusUpdate, AgentResult, ApprovalRequest, ApprovalResult, GatedAction } from './types.js';
-import { initAgentMetrics, recordAgentRun, type AgentRunStatus } from './metrics.js';
+import {
+  initAgentMetrics,
+  recordAgentApprovalRequest,
+  recordAgentRun,
+  type AgentRunStatus,
+} from './metrics.js';
 
 const POLL_INTERVAL_MS = 3_000;
 const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -120,6 +125,7 @@ export class AgentReporter {
           const data = await res.json() as { outcome?: string; token?: string; reason?: string };
           if (data.outcome === 'approved' || data.outcome === 'rejected') {
             await this.running(`Approval ${data.outcome} — resuming`);
+            recordAgentApprovalRequest(data.outcome as 'approved' | 'rejected');
             return { outcome: data.outcome as 'approved' | 'rejected', token: data.token, reason: data.reason };
           }
         }
@@ -128,6 +134,7 @@ export class AgentReporter {
       }
     }
 
+    recordAgentApprovalRequest('timeout');
     return { outcome: 'rejected', reason: 'Approval timeout (10 min)' };
   }
 
