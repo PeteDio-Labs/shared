@@ -14,6 +14,7 @@ import type { z } from 'zod';
 import { AgentReporter } from '../agents/reporter.js';
 import { runDeterministicPlan } from '../agents/deterministic.js';
 import { runToolLoop } from '../agents/loop.js';
+import { initAgentMetrics } from '../agents/metrics.js';
 import type { AgentResult, TaskPayload } from '../agents/types.js';
 
 import { LlmClient } from './llmClient.js';
@@ -60,6 +61,12 @@ export function createAgent<TInput>(opts: CreateAgentOptions<TInput>): AgentHand
   const llm = new LlmClient({ defaultModel: opts.model, ...(opts.llm ?? {}) });
   const tools = new Map<string, Tool>((opts.tools ?? []).map(t => [t.name, t]));
   const mcUrl = opts.mcUrl ?? process.env.MC_BACKEND_URL ?? 'http://localhost:3000';
+
+  // Initialise metrics eagerly so /metrics scrapes BEFORE the first /run
+  // return `agent_up{agent}=1` instead of throwing from getMetricsRegistry().
+  // initAgentMetrics is idempotent — AgentReporter's repeat call inside
+  // handleRun is a no-op.
+  initAgentMetrics({ agentName: opts.name });
 
   async function handleRun(rawBody: unknown): Promise<{ status: number; body: unknown }> {
     const payload = rawBody as TaskPayload;

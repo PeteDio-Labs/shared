@@ -10,6 +10,21 @@ import express, { type Application } from 'express';
 import type pino from 'pino';
 import { renderMetrics } from '../agents/metrics.js';
 
+// Internal flag toggled by tests + the metrics module via the existing
+// init path. We avoid importing the private `_registry` symbol; instead we
+// detect readiness by trying to render the registry — if it throws, the
+// agent hasn't initialised yet (createAgent does this at construction now,
+// so in production this branch is only hit during the brief window before
+// startStandaloneAgentServer's listen callback fires).
+async function isMetricsReady(): Promise<boolean> {
+  try {
+    await renderMetrics();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface ServerOptions {
   port: number;
   agentName: string;
@@ -47,6 +62,22 @@ export function startStandaloneAgentServer(opts: ServerOptions): Promise<ServerH
         agent: opts.agentName,
         ...(opts.onHealth?.() ?? {}),
       });
+    });
+
+    // /readyz mirrors the K8s readiness probe contract: 200 once the
+    // metrics registry is wired (which now happens at createAgent()
+    // construction), 503 otherwise. K8s pulls this pod out of the
+    // Service endpoints until /readyz flips green.
+    app.get('/readyz', async (_req, res) => {
+      if (await isMetricsReady()) {
+        res.status(200).json({ status: 'ready', agent: opts.agentName });
+      } else {
+        res.status(503).json({
+          status: 'not-ready',
+          agent: opts.agentName,
+          reason: 'metrics registry not initialised',
+        });
+      }
     });
 
     app.get('/metrics', async (_req, res) => {

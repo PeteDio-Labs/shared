@@ -14,9 +14,23 @@ import type { ToolDef } from '../agents/loop.js';
 import type pino from 'pino';
 
 export interface ToolExecContext {
-  reporter: AgentReporter;
-  log: pino.Logger;
-  signal: AbortSignal;
+  /**
+   * The active agent's reporter, so tools can stream log lines or request
+   * approval mid-execution. Optional so callers can pass `{}` for unit
+   * tests / one-off invocations that don't need MC integration.
+   */
+  reporter?: AgentReporter;
+  /** Pino child logger scoped to the agent. Optional for the same reason. */
+  log?: pino.Logger;
+  /**
+   * Cancellation signal. Optional — the harness does not currently thread
+   * a per-step signal through `runDeterministicPlan`'s executeStep callback,
+   * so consumers either supply their own (`AbortSignal.timeout(...)`) or
+   * default inside the tool body. A future minor version may derive this
+   * from a per-task AbortController; until then `args.signal ?? AbortSignal.timeout(default)`
+   * is the canonical pattern for tools that need one.
+   */
+  signal?: AbortSignal;
 }
 
 export interface Tool<TArgs = Record<string, unknown>> extends Omit<ToolDef<TArgs>, 'execute'> {
